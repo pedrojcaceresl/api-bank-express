@@ -11,7 +11,102 @@ services:
       - "5433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    shm_size: "2gb"
+    command: >
+      postgres
+      -c max_connections=300
+      -c shared_buffers=2GB
+      -c effective_cache_size=5GB
+      -c work_mem=32MB
+      -c maintenance_work_mem=1GB
+      -c wal_buffers=64MB
+      -c checkpoint_timeout=15min
+      -c max_wal_size=3GB
+      -c checkpoint_completion_target=0.9
+      -c log_min_duration_statement=250
+      -c idle_in_transaction_session_timeout=10s
+      -c statement_timeout=15000
+      -c synchronous_commit=off
+      -c max_parallel_workers_per_gather=4
+      -c max_worker_processes=8
+      -c max_parallel_workers=8
+      -c autovacuum_vacuum_scale_factor=0.05
+      -c autovacuum_analyze_scale_factor=0.02
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: "6g"
 
+  pgbouncer:
+    image: edoburu/pgbouncer:latest
+    container_name: bank-api-pgbouncer
+    restart: always
+    environment:
+      DB_USER: ${PG_DB_USERNAME}
+      DB_PASSWORD: ${PG_DB_PASSWORD}
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: ${PG_DB_NAME}
+      POOL_MODE: transaction
+      MAX_CLIENT_CONN: 1000
+      DEFAULT_POOL_SIZE: 100
+      AUTH_TYPE: plain 
+    ports:
+      - "6432:5432"
+    depends_on:
+      - postgres
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: "512m"
+
+  valkey:
+    image: valkey/valkey:8.0-alpine
+    container_name: bank-api-queue
+    restart: always
+    ports:
+      - "6389:6379"
+    command: valkey-server --maxmemory 512mb --maxmemory-policy noeviction --appendonly yes
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: "1g"
+
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "3000:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - app
+
+  app:
+    build: .
+    restart: always
+    deploy:
+      mode: replicated
+      replicas: 2
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: "1g"
+    environment:
+      # Conexión a BD vía PgBouncer (puerto 6432 en el host, 5432 en el contenedor pgbouncer)
+      # Dentro de la red docker usamos el nombre del servicio: pgbouncer
+      DATABASE_URL: postgresql://${PG_DB_USERNAME}:${PG_DB_PASSWORD}@pgbouncer:5432/${PG_DB_NAME}?pgbouncer=true
+      # Configuración de Redis/Valkey
+      REDIS_HOST: valkey
+      REDIS_PORT: 6379
+      # Otros
+      PORT: 3000
+    depends_on:
+      - postgres
+      - valkey
+      - pgbouncer
 
 volumes:
   postgres_data:

@@ -1,11 +1,13 @@
 require("dotenv").config();
 const express = require("express");
+const morgan = require("morgan");
 const routes = require("./src/routes/v1")
     
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+//app.use(morgan("dev")); // 'dev' para logs coloridos en consola
 app.use(express.json());
 
 app.use("/api/v1", routes);

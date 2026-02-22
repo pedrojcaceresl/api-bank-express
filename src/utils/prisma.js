@@ -5,8 +5,14 @@ const { Pool } = require('pg')
 
 // Configuración de la conexión a la base de datos
 
+const connectionString = process.env.DATABASE_URL || "postgresql://postgres:mysecretpassword@127.0.0.1:5433/bank_db";
+
 const pool = new Pool({
-    connectionString: process.env.DATABASE_URL
+    connectionString,
+    max: Number(process.env.PG_POOL_MAX || 20),
+    idleTimeoutMillis: 10000,
+    connectionTimeoutMillis: 2000,
+    ssl: false // PgBouncer local normalmente no tiene SSL, aseguramos
 })
 
 

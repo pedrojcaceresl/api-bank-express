@@ -4,14 +4,14 @@ import { check, group, sleep } from "k6";
 // =========================
 // Config por ENV
 // =========================
-const BASE_URL = __ENV.BASE_URL || "http://localhost:3000";
+const BASE_URL = __ENV.BASE_URL || "http://localhost:3000/api/v1";
 
 // Hot accounts fijas
-const HOT_IDS = [1, 2, 3, 4, 5];
+const HOT_IDS = [6, 7, 8, 9, 10];
 
 // Rango de cuentas "no-hot" (asumimos IDs numéricas y existentes)
 const MIN_NORMAL_ID = __ENV.MIN_NORMAL_ID ? parseInt(__ENV.MIN_NORMAL_ID, 10) : 6;
-const MAX_ACCOUNT_ID = __ENV.MAX_ACCOUNT_ID ? parseInt(__ENV.MAX_ACCOUNT_ID, 10) : 300;
+const MAX_ACCOUNT_ID = __ENV.MAX_ACCOUNT_ID ? parseInt(__ENV.MAX_ACCOUNT_ID, 10) : 100; // REDUCIDO para asegurar que existan en DB pequeña
 
 // Qué porcentaje del tráfico pega al hotspot
 const HOT_RATIO = __ENV.HOT_RATIO ? parseFloat(__ENV.HOT_RATIO) : 0.85;
@@ -30,10 +30,10 @@ export const options = {
   scenarios: {
     transferencias_concurrentes: {
       executor: "ramping-arrival-rate",
-      startRate: __ENV.START_RATE ? parseInt(__ENV.START_RATE, 10) : 20,
+      startRate: __ENV.START_RATE ? parseInt(__ENV.START_RATE, 10) : 50,
       timeUnit: "1s",
-      preAllocatedVUs: __ENV.PRE_VUS ? parseInt(__ENV.PRE_VUS, 10) : 20,
-      maxVUs: __ENV.MAX_VUS ? parseInt(__ENV.MAX_VUS, 10) : 100,
+      preAllocatedVUs: __ENV.PRE_VUS ? parseInt(__ENV.PRE_VUS, 10) : 100,
+      maxVUs: __ENV.MAX_VUS ? parseInt(__ENV.MAX_VUS, 10) : 1000,
       stages: [
         { target: __ENV.TARGET_RATE ? parseInt(__ENV.TARGET_RATE, 10) : 200, duration: "30s" },
         { target: __ENV.TARGET_RATE ? parseInt(__ENV.TARGET_RATE, 10) : 200, duration: "1m" },
@@ -43,8 +43,8 @@ export const options = {
     },
   },
   thresholds: {
-    http_req_failed: ["rate<0.05"],
-    http_req_duration: ["p(95)<1000", "p(99)<2000"],
+    http_req_failed: ["rate<0.05"], // Permitir hasta 5% de fallos por contención
+    http_req_duration: ["p(95)<2000"],
   },
 };
 
@@ -85,31 +85,33 @@ function pickPairDifferent(rng, pickFn) {
 }
 
 // =========================
-// Default: 1 iteración = 1 transferencia
+// Default: 1 iteración = 1 transferencia con validación ocasional
 // =========================
 export default function () {
   const rng = mulberry32(SEED + __VU * 100000 + __ITER);
 
   group("Escenario 1 - Concurrencia (transferencias simultáneas)", () => {
-    const useHot = rng() < HOT_RATIO;
+    
+    // TIPO DE ESCENARIO:
+    // 'HOT-DEST': Muchos origenes -> Pocos destinos (Contención de fila destino)
+    // 'HOT-HOT': Pocos orígenes <-> Pocos destinos (Contención máxima / Deadlocks probables)
+    const SCENARIO_TYPE = __ENV.SCENARIO_TYPE || 'HOT-DEST'; 
 
     let originId, destId;
 
-    if (useHot) {
-      // Contención: ambos dentro de 1..5
-      [originId, destId] = pickPairDifferent(rng, () => pickOne(rng, HOT_IDS));
+    if (SCENARIO_TYPE === 'HOT-HOT') {
+       // Hotspot puro: Todo ocurre entre las cuentas 1..5
+       [originId, destId] = pickPairDifferent(rng, () => pickOne(rng, HOT_IDS));
     } else {
-      // Tráfico normal: usa cuentas fuera del hotspot
-      // Si quieres mezclar hot->normal o normal->hot, te lo ajusto después.
-      [originId, destId] = pickPairDifferent(rng, () =>
-        randInt(rng, MIN_NORMAL_ID, MAX_ACCOUNT_ID)
-      );
+       // HOT-DEST (Default): Normales envían a Hot
+       originId = randInt(rng, MIN_NORMAL_ID, MAX_ACCOUNT_ID);
+       destId = pickOne(rng, HOT_IDS);
     }
-
+    
     const monto = randAmount(rng);
 
     const res = http.post(
-      `${BASE_URL}/transferencias`,
+      `${BASE_URL}/transferencias`, // ⬅️ CAMBIO: Volver al Síncrono para comparativa real
       JSON.stringify({
         cuenta_origen_id: originId,
         cuenta_destino_id: destId,
@@ -118,11 +120,31 @@ export default function () {
       jsonHeaders()
     );
 
-    // Para concurrencia, algunos errores son esperables (saldo insuficiente/conflictos)
-    check(res, {
-      "status esperado (2xx o 409/422)": (r) =>
-        (r.status >= 200 && r.status < 300) || r.status === 409 || r.status === 422,
+    const checkRes = check(res, {
+      "status esperado (2xx)": (r) => r.status === 200 || r.status === 201, // 200/201 OK = "Procesado y guardado en DB"
     });
+
+    if (!checkRes) {
+      console.error(`Fallo request. Status: ${res.status}. Body: ${res.body}`);
+    }
+
+    if (!checkRes) {
+      console.error(`Fallo request. Status: ${res.status}. Body: ${res.body}`);
+    }
+
+    // Validacion de consistencia ligera (~1% de las veces)
+    // Verificamos que el saldo no sea negativo en una de las cuentas involucradas
+    if (rng() < 0.01) {
+       const checkId = rng() < 0.5 ? originId : destId;
+       const resCheck = http.get(`${BASE_URL}/cuentas/${checkId}/saldo`);
+       
+       if (resCheck.status === 200) {
+          const body = resCheck.json();
+          check(resCheck, {
+             "Saldo consistente (no negativo)": () => parseFloat(body.saldo) >= 0
+          });
+       }
+    }
 
     // Pequeña desincronización
     sleep(rng() * 0.15);

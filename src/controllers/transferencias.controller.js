@@ -10,9 +10,26 @@ const crearTransferencia = async (req, res) => {
     if (missing.length) return res.status(STATUS.BAD_REQUEST).json({ error: `Faltan campos: ${missing.join(", ")}` });
 
     const transferencia = await transferenciasService.crearTransferencia({ cuenta_origen_id, cuenta_destino_id, monto });
-    res.status(STATUS.CREATED).json(replaceBigInt(transferencia));
+    res.status(201).json(replaceBigInt(transferencia));
   } catch (error) {
-    res.status(STATUS.INTERNAL_SERVER_ERROR).json({ error: error.message });
+    console.error("Error transferencia:", error);
+
+    // Mapeo detallado de errores para responder correctamente al cliente
+    if (error.message.includes("Saldo insuficiente")) {
+      return res.status(409).json({ error: "Saldo insuficiente" });
+    }
+    if (error.message.includes("no encontrada")) {
+      return res.status(404).json({ error: error.message });
+    }
+    // Errores de concurrencia de Prisma/Postgres
+    if (error.code === 'P2034' || error.message.includes('deadlock') || error.message.includes('serialization')) {
+        return res.status(409).json({ error: "Conflicto de concurrencia, por favor reintente" }); 
+    }
+    if (error.message.includes('Timed out')) {
+        return res.status(503).json({ error: "Servidor saturado, intente más tarde" });
+    }
+
+    res.status(500).json({ error: "Error interno" });
   }
 };
 
