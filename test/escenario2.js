@@ -16,8 +16,8 @@ const HASTA = __ENV.HASTA || "2026-12-31";
 const MODE = __ENV.MODE || "PAGINADO";
 
 // Parámetros paginación
-const LIMIT = __ENV.LIMIT ? parseInt(__ENV.LIMIT, 10) : 1000;
-const MAX_OFFSET = __ENV.MAX_OFFSET ? parseInt(__ENV.MAX_OFFSET, 10) : 10000;
+const LIMIT = __ENV.LIMIT ? parseInt(__ENV.LIMIT, 10) : 100;
+const MAX_OFFSET = __ENV.MAX_OFFSET ? parseInt(__ENV.MAX_OFFSET, 10) : 100;
 
 // Seed reproducible
 const SEED = __ENV.SEED ? parseInt(__ENV.SEED, 10) : 54321;
