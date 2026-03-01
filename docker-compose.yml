@@ -84,6 +84,16 @@ services:
     depends_on:
       - app
 
+  migrate:
+    build: .
+    restart: "no"
+    command: ["npx", "prisma", "migrate", "deploy"]
+    environment:
+      DATABASE_URL: postgresql://${PG_DB_USERNAME}:${PG_DB_PASSWORD}@pgbouncer:5432/${PG_DB_NAME}?pgbouncer=true
+    depends_on:
+      - postgres
+      - pgbouncer
+
   app:
     build: .
     restart: always
@@ -104,9 +114,12 @@ services:
       # Otros
       PORT: 3000
     depends_on:
-      - postgres
-      - valkey
-      - pgbouncer
+      migrate:
+        condition: service_completed_successfully
+      valkey:
+        condition: service_started
+      pgbouncer:
+        condition: service_started
 
 volumes:
   postgres_data:
