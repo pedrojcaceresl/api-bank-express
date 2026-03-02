@@ -5,56 +5,73 @@ const prisma = require("./src/utils/prisma");
 async function main() {
   console.log('🌱 Iniciando seed para Load Test...');
 
-  // Limpiar datos existentes (Opcional, comenta si prefieres mantener)
-  // await prisma.transacciones.deleteMany({});
-  // await prisma.transferencias.deleteMany({});
-  // await prisma.cuentas.deleteMany({});
-  // await prisma.clientes.deleteMany({});
-  
-  // Si ya tienes usuarios/cuentas, mejor solo ACTUALIZAR saldos masivamente
-  // para que el test no falle por "Saldo insuficiente"
-  
   const minId = 1;
-  const maxId = 100; // Ajusta según tus datos reales
-  
-  console.log(`🔄 Reseteando saldos para cuentas de usuarios ${minId} a ${maxId}...`);
+  const maxId = 100;
+  const saldoInicial = 1000000.0;
 
-  // Opción A: Actualizar saldo de cuentas existentes
-  // Le damos 1,000,000 a cada cuenta para que nunca se queden sin saldo en el test
+  console.log("📦 Asegurando tipos de cuenta...");
+  await prisma.tipos_cuenta.createMany({
+    data: [
+      { id: 1, nombre: "Ahorro", descripcion: "Cuenta de ahorros" },
+      { id: 2, nombre: "Corriente", descripcion: "Cuenta corriente" }
+    ],
+    skipDuplicates: true
+  });
+
+  console.log(`👤 Asegurando clientes ${minId}..${maxId}...`);
+  const clientes = [];
+  for (let i = minId; i <= maxId; i++) {
+    clientes.push({
+      id: i,
+      nombre: `Cliente ${i}`,
+      email: `cliente${i}@loadtest.local`,
+      created_at: new Date()
+    });
+  }
+  await prisma.clientes.createMany({ data: clientes, skipDuplicates: true });
+
+  console.log(`🏦 Asegurando cuentas ${minId}..${maxId}...`);
+  const existing = await prisma.cuentas.findMany({
+    where: {
+      id: {
+        gte: BigInt(minId),
+        lte: BigInt(maxId)
+      }
+    },
+    select: { id: true }
+  });
+
+  const existingIds = new Set(existing.map((c) => Number(c.id)));
+  const missingAccounts = [];
+
+  for (let i = minId; i <= maxId; i++) {
+    if (!existingIds.has(i)) {
+      missingAccounts.push({
+        id: BigInt(i),
+        cliente_id: i,
+        tipo_cuenta_id: (i % 2) + 1,
+        numero_cuenta: `CT-${i.toString().padStart(8, "0")}`,
+        saldo: saldoInicial,
+        created_at: new Date()
+      });
+    }
+  }
+
+  if (missingAccounts.length > 0) {
+    await prisma.cuentas.createMany({ data: missingAccounts, skipDuplicates: true });
+  }
+
   const updateResult = await prisma.cuentas.updateMany({
     where: {
       id: {
-        gte: minId, 
-        lte: maxId
+        gte: BigInt(minId),
+        lte: BigInt(maxId)
       }
     },
-    data: {
-      saldo: 1000000.00 
-    }
+    data: { saldo: saldoInicial }
   });
 
-  console.log(`✅ ${updateResult.count} cuentas actualizadas con saldo millonario.`);
-
-  // Opción B: Si faltan cuentas, crearlas (Descomenta si necesitas)
-  /*
-  for (let i = 1; i <= 200; i++) {
-    const exists = await prisma.cuentas.findUnique({ where: { id: i } });
-    if (!exists) {
-        // Crear cliente dummy si es necesario
-        // ...
-        // Crear cuenta
-        await prisma.cuentas.create({
-            data: {
-                id: i,
-                numero_cuenta: `CT-${i.toString().padStart(6, '0')}`,
-                saldo: 1000000,
-                cliente_id: 1, // Asume que cliente 1 existe
-                tipo_cuenta_id: 1
-            }
-        });
-    }
-  }
-  */
+  console.log(`✅ ${updateResult.count} cuentas listas con saldo.`);
 
   console.log('🚀 Seed completado. Listo para k6.');
 }

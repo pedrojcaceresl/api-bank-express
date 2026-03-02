@@ -87,12 +87,14 @@ services:
   migrate:
     build: .
     restart: "no"
-    command: ["npx", "prisma", "migrate", "deploy"]
+    command:
+      - "sh"
+      - "-c"
+      - "until npx prisma migrate deploy; do echo 'Retry migrate in 2s...'; sleep 2; done"
     environment:
-      DATABASE_URL: postgresql://${PG_DB_USERNAME}:${PG_DB_PASSWORD}@pgbouncer:5432/${PG_DB_NAME}?pgbouncer=true
+      DATABASE_URL: postgresql://${PG_DB_USERNAME}:${PG_DB_PASSWORD}@postgres:5432/${PG_DB_NAME}?schema=public
     depends_on:
       - postgres
-      - pgbouncer
 
   app:
     build: .
